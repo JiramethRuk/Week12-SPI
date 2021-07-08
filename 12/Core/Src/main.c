@@ -48,8 +48,8 @@ DMA_HandleTypeDef hdma_adc1;
 
 SPI_HandleTypeDef hspi3;
 
+TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
-TIM_HandleTypeDef htim11;
 
 UART_HandleTypeDef huart2;
 
@@ -60,16 +60,30 @@ char RxDataBuffer[32] =
 { 0 };
 int16_t inputchar = 0;
 uint16_t state = 0;
-float f = 0;
+float f = 1;
+float T = 0;
 float Vhigh = 3.3;
 float Vlow = 0.0;
 int slope = 0;
 float Duty_cycle = 0;
 int wave = 0;
+float VIn = 0;
+float VOut = 0;
+float deltaV = 0;
+float delta_t = 0;
+float deltaVfinal = 0;
+double angle = 0;
+float t = 0;
+float pi = 3.14;
+uint16_t VhighADC = 0;
+uint16_t VlowADC = 0;
+static uint64_t timestamp = 0;
+static uint64_t wavetime = 0;
+
 uint16_t ADCin = 0;
 uint64_t _micro = 0;
 uint16_t dataOut = 0;
-	uint8_t DACConfig = 0b0011;
+	uint8_t DACConfig = 0b0011;  //SPIจะมี16bit โหมดในSPIใช้4bit ข้อมูลอีก12bit
 enum state
 {
 	state_start = 0,
@@ -81,6 +95,44 @@ enum state
 	state_functionSine = 60,
 	state_functionSquare = 70
 };
+
+char Menu[]="press 1 : Sawtooth wave\r\n"
+			    "press 2 : Sine wave\r\n"
+			    "press 3 : Square wave\r\n\r\n";
+	char SawtoothMenu[]="SawtoothMenu\r\n "
+			            "press a: +frequency\r\n "
+			            "press s: -frequency\r\n "
+		                "press q: +V high\r\n "
+		                "press w: -V high\r\n "
+		                "press e: +V low \r\n "
+		                "press r: -V low\r\n "
+		                "press d: slop Up\r\n "
+		                "press f: slope down\r\n "
+		                "press x: back\r\n\r\n";
+	char SineMenu[]="SineMenu\r\n "
+			        "press a: +frequency\r\n "
+			        "press s: -frequency\r\n "
+			        "press q: +V high\r\n "
+			        "press w: -V high\r\n "
+			        "press e: +V low \r\n "
+			        "press r: -V low\r\n"
+			        "press x: back\r\n\r\n ";
+	char SquareMenu[]="SquareMenu\r\n "
+			          "press a: +frequency\r\n "
+			          "press s: -frequency\r\n "
+				      "press q: +V high\r\n "
+				      "press w: -V high\r\n "
+				      "press e: +V low \r\n "
+				      "press r: -V low\r\n "
+				      "press d: +Duty cycle\r\n "
+				      "press f: -Duty cycle\r\n "
+				      "press x: back\r\n\r\n ";
+	char showf[10] = "";
+	char showVH[20] = "";
+	char showVL[20] = "";
+	char showDutyCycle[40] = "";
+	char SlopeUp[] = "SlopeUp\r\n";
+	char SlopeDown[] = "SlopeDown\r\n";
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -91,7 +143,7 @@ static void MX_USART2_UART_Init(void);
 static void MX_SPI3_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_TIM3_Init(void);
-static void MX_TIM11_Init(void);
+static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
 void MCP4922SetOutput(uint8_t Config, uint16_t DACOutput);
 uint64_t micros();
@@ -136,23 +188,14 @@ int main(void)
   MX_SPI3_Init();
   MX_ADC1_Init();
   MX_TIM3_Init();
-  MX_TIM11_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
 	HAL_TIM_Base_Start(&htim3);
-	HAL_TIM_Base_Start_IT(&htim11);
+	HAL_TIM_Base_Start_IT(&htim2);
 	HAL_ADC_Start_DMA(&hadc1, (uint32_t*) &ADCin, 1);
 
 	HAL_GPIO_WritePin(LOAD_GPIO_Port, LOAD_Pin, GPIO_PIN_RESET);
 
-	char Menu[]="1 : Sawtooth wave\r\n2 : Sine wave\r\n3 : Square wave\r\n";
-	char SawtoothMenu[]=
-		"SawtoothMenu\r\n press a:+frequency\r\n press s:-frequency\r\n "
-		"press q: +V high\r\n press w: -V high\r\n press e: +V low \r\n press r: -V low\r\n "
-		"press d: slop Up\r\n press f: slope down\r\n press x: back\r\n";
-	char SineMenu[]="SawtoothMenu\r\n press a:+frequency\r\n press s:-frequency\r\n "
-			"press q: +V high\r\n press w: -V high\r\n press e: +V low \r\n press r: -V low\r\n ";
-	char SquareMenu[]="SawtoothMenu\r\n press a:+frequency\r\n press s:-frequency\r\n "
-				"press q: +V high\r\n press w: -V high\r\n press e: +V low \r\n press r: -V low\r\n ";
 
   /* USER CODE END 2 */
 
@@ -160,24 +203,15 @@ int main(void)
   /* USER CODE BEGIN WHILE */
 	while (1)
 	{
-//		static uint64_t timestamp = 0;
-//		if (micros() - timestamp > 100)
-//		{
-//			timestamp = micros();
-//			dataOut++;
-//			dataOut %= 4096;
-//			if (hspi3.State == HAL_SPI_STATE_READY
-//					&& HAL_GPIO_ReadPin(SPI_SS_GPIO_Port, SPI_SS_Pin)
-//							== GPIO_PIN_SET)
-//			{
-//				MCP4922SetOutput(DACConfig, dataOut);
-//			}
-//		}
 		HAL_UART_Receive_IT(&huart2,  (uint8_t*)RxDataBuffer, 10);
 		inputchar = UARTRecieveIT();
 		switch (state)
 		{
 			case state_start:
+				wave = 0;
+//				char Menu[]="press 1 : Sawtooth wave\r\n"
+//						    "press 2 : Sine wave\r\n"
+//						    "press 3 : Square wave\r\n\r\n ";
 				HAL_UART_Transmit(&huart2, (uint8_t*)Menu, strlen(Menu),10);
 				state = state_Menu;
 				break;
@@ -200,27 +234,41 @@ int main(void)
 				}
 				break;
 			case state_Sawtooth:
-				HAL_UART_Transmit(&huart2, (uint8_t*)SawtoothMenu, strlen(SawtoothMenu),10);
+//				char SawtoothMenu[]="SawtoothMenu\r\n "
+//									"press a:+frequency\r\n "
+//									"press s:-frequency\r\n "
+//									"press q: +V high\r\n "
+//									"press w: -V high\r\n "
+//									"press e: +V low \r\n "
+//									"press r: -V low\r\n "
+//									"press d: slop Up\r\n "
+//									"press f: slope down\r\n "
+//									"press x: back\r\n\r\n ";
+				HAL_UART_Transmit(&huart2, (uint8_t*)SawtoothMenu, strlen(SawtoothMenu),100);
 				state = state_functionSawtooth;
 				break;
 			case state_functionSawtooth:
 				wave = 1;
 				if (inputchar == 'a') //เพิ่มความถี่
 				{
-					f = f + 0.1;
+					f += 0.1;
 					if(f>10)
 					{
 						f = 10;
 					}
+					sprintf(showf,"f = %f Hz\r\n",f);
+					HAL_UART_Transmit(&huart2, (uint8_t*)showf, strlen(showf), 10);
 					state = state_functionSawtooth;
 				}
 				else if(inputchar == 's')  //ลดความถี่
 				{
-					f = f - 0.1;
-					if(f>0)
+					f -= 0.1;
+					if(f<=0)
 					{
 						f = 0;
 					}
+					sprintf(showf,"f = %f Hz\r\n",f);
+					HAL_UART_Transmit(&huart2, (uint8_t*)showf, strlen(showf), 10);
 					state = state_functionSawtooth;
 				}
 				else if(inputchar == 'q')  //เพิ่ม V high
@@ -230,6 +278,8 @@ int main(void)
 					{
 						Vhigh = 3.3;
 					}
+					sprintf(showVH,"Vhigh = %f Volt\r\n",Vhigh);
+					HAL_UART_Transmit(&huart2, (uint8_t*)showVH, strlen(showVH), 10);
 					state = state_functionSawtooth;
 				}
 				else if(inputchar == 'w')  //ลด V high
@@ -239,6 +289,8 @@ int main(void)
 					{
 						Vhigh = 0;
 					}
+					sprintf(showVH,"Vhigh = %f Volt\r\n",Vhigh);
+					HAL_UART_Transmit(&huart2, (uint8_t*)showVH, strlen(showVH), 10);
 					state = state_functionSawtooth;
 				}
 				else if(inputchar == 'e')  //เพิ่ม V low
@@ -248,6 +300,8 @@ int main(void)
 					{
 						Vlow = 3.3;
 					}
+					sprintf(showVL,"VLow = %f Volt\r\n",Vlow);
+					HAL_UART_Transmit(&huart2, (uint8_t*)showVL, strlen(showVL), 10);
 					state = state_functionSawtooth;
 				}
 				else if(inputchar == 'r')  //ลด V low
@@ -257,16 +311,20 @@ int main(void)
 					{
 						Vlow = 0;
 					}
+					sprintf(showVL,"VLow = %f Volt\r\n",Vlow);
+					HAL_UART_Transmit(&huart2, (uint8_t*)showVL, strlen(showVL), 10);
 					state = state_functionSawtooth;
 				}
 				else if(inputchar == 'd')  //slope up
 				{
 					slope = 1;
+					HAL_UART_Transmit(&huart2, (uint8_t*)SlopeUp, strlen(SlopeUp), 10);
 					state = state_functionSawtooth;
 				}
 				else if(inputchar == 'f')  //slope down
 				{
 					slope = -1;
+					HAL_UART_Transmit(&huart2, (uint8_t*)SlopeDown, strlen(SlopeDown), 10);
 					state = state_functionSawtooth;
 				}
 				else if(inputchar == 'x')
@@ -275,11 +333,19 @@ int main(void)
 				}
 				else
 				{
-					state = state_Sawtooth;
+					state = state_functionSawtooth;
 				}
 				break;
 			case state_Sine:
-				HAL_UART_Transmit(&huart2, (uint8_t*)SineMenu, strlen(SineMenu),10);
+//				char SineMenu[]="SineMenu\r\n "
+//								"press a:+frequency\r\n "
+//								"press s:-frequency\r\n "
+//								"press q: +V high\r\n "
+//								"press w: -V high\r\n "
+//								"press e: +V low \r\n "
+//								"press r: -V low\r\n "
+//								"press x: back\r\n\r\n ";
+				HAL_UART_Transmit(&huart2, (uint8_t*)SineMenu, strlen(SineMenu),100);
 				state = state_functionSine;
 				break;
 			case state_functionSine:
@@ -291,15 +357,19 @@ int main(void)
 					{
 						f = 10;
 					}
+					sprintf(showf,"f = %f Hz\r\n",f);
+					HAL_UART_Transmit(&huart2, (uint8_t*)showf, strlen(showf), 10);
 					state = state_functionSine;
 				}
 				else if(inputchar == 's')  //ลดความถี่
 				{
 					f = f - 0.1;
-					if(f>0)
+					if(f<0)
 					{
 						f = 0;
 					}
+					sprintf(showf,"f = %f Hz\r\n",f);
+					HAL_UART_Transmit(&huart2, (uint8_t*)showf, strlen(showf), 10);
 					state = state_functionSine;
 				}
 				else if(inputchar == 'q')  //เพิ่ม V high
@@ -309,6 +379,8 @@ int main(void)
 					{
 						Vhigh = 3.3;
 					}
+					sprintf(showVH,"Vhigh = %f Volt\r\n",Vhigh);
+					HAL_UART_Transmit(&huart2, (uint8_t*)showVH, strlen(showVH), 10);
 					state = state_functionSine;
 				}
 				else if(inputchar == 'w')  //ลด V high
@@ -318,6 +390,8 @@ int main(void)
 					{
 						Vhigh = 0;
 					}
+					sprintf(showVH,"Vhigh = %f Volt\r\n",Vhigh);
+					HAL_UART_Transmit(&huart2, (uint8_t*)showVH, strlen(showVH), 10);
 					state = state_functionSine;
 				}
 				else if(inputchar == 'e')  //เพิ่ม V low
@@ -327,6 +401,8 @@ int main(void)
 					{
 						Vlow = 3.3;
 					}
+					sprintf(showVL,"VLow = %f Volt\r\n",Vlow);
+					HAL_UART_Transmit(&huart2, (uint8_t*)showVL, strlen(showVL), 10);
 					state = state_functionSine;
 				}
 				else if(inputchar == 'r')  //ลด V low
@@ -336,19 +412,31 @@ int main(void)
 					{
 						Vlow = 0;
 					}
+					sprintf(showVL,"VLow = %f Volt\r\n",Vlow);
+					HAL_UART_Transmit(&huart2, (uint8_t*)showVL, strlen(showVL), 10);
 					state = state_functionSine;
 				}
-				else if(inputchar == 'x')  //ย้อนกลับไป menu
+				else if(inputchar == 'x')  //ย้อน�?ลับไป menu
 				{
 					state = state_start;
 				}
 				else
 				{
-					state = state_Sine;
+					state =state_functionSine;
 				}
 				break;
 			case state_Square:
-				HAL_UART_Transmit(&huart2, (uint8_t*)SquareMenu, strlen(SquareMenu),10);
+//				char SquareMenu[]="SquareMenu\r\n "
+//						          "press a:+frequency\r\n "
+//						          "press s:-frequency\r\n "
+//								  "press q: +V high\r\n "
+//								  "press w: -V high\r\n "
+//								  "press e: +V low \r\n "
+//								  "press r: -V low\r\n "
+//								  "press d: +Duty_cyccle\r\n "
+//								  "press f: -Duty_cyccle\r\n "
+//								  "press x: back\r\n ";
+				HAL_UART_Transmit(&huart2, (uint8_t*)SquareMenu, strlen(SquareMenu),100);
 				state = state_functionSquare;
 				break;
 			case state_functionSquare:
@@ -360,15 +448,19 @@ int main(void)
 					{
 						f = 10;
 					}
+					sprintf(showf,"f = %f Hz\r\n",f);
+					HAL_UART_Transmit(&huart2, (uint8_t*)showf, strlen(showf), 10);
 					state = state_functionSquare;
 				}
 				else if(inputchar == 's')  //ลดความถี่
 				{
 					f = f - 0.1;
-					if(f>0)
+					if(f<0)
 					{
 						f = 0;
 					}
+					sprintf(showf,"f = %f Hz\r\n",f);
+					HAL_UART_Transmit(&huart2, (uint8_t*)showf, strlen(showf), 10);
 					state = state_functionSquare;
 				}
 				else if(inputchar == 'q')  //เพิ่ม V high
@@ -378,6 +470,8 @@ int main(void)
 					{
 						Vhigh = 3.3;
 					}
+					sprintf(showVH,"Vhigh = %f Volt\r\n",Vhigh);
+					HAL_UART_Transmit(&huart2, (uint8_t*)showVH, strlen(showVH), 10);
 					state = state_functionSquare;
 				}
 				else if(inputchar == 'w')  //ลด V high
@@ -387,6 +481,8 @@ int main(void)
 					{
 						Vhigh = 0;
 					}
+					sprintf(showVH,"Vhigh = %f Volt\r\n",Vhigh);
+					HAL_UART_Transmit(&huart2, (uint8_t*)showVH, strlen(showVH), 10);
 					state = state_functionSquare;
 				}
 				else if(inputchar == 'e')  //เพิ่ม V low
@@ -396,6 +492,8 @@ int main(void)
 					{
 						Vlow = 3.3;
 					}
+					sprintf(showVL,"VLow = %f Volt\r\n",Vlow);
+					HAL_UART_Transmit(&huart2, (uint8_t*)showVL, strlen(showVL), 10);
 					state = state_functionSquare;
 				}
 				else if(inputchar == 'r')  //ลด V low
@@ -405,48 +503,117 @@ int main(void)
 					{
 						Vlow = 0;
 					}
+					sprintf(showVL,"VLow = %f Volt\r\n",Vlow);
+					HAL_UART_Transmit(&huart2, (uint8_t*)showVL, strlen(showVL), 10);
 					state = state_functionSquare;
 				}
 				else if(inputchar == 'd')  //เพิ่ม Duty cycle
 				{
-					Duty_cycle = Duty_cycle + 0.1;
-					if(Duty_cycle > 1)
+					Duty_cycle = Duty_cycle + 10;
+					if(Duty_cycle > 100)
 					{
-						Duty_cycle = 1;
+						Duty_cycle = 100;
 					}
+					sprintf(showDutyCycle,"DutyCycle = %f Percent\r\n",Duty_cycle);
+					HAL_UART_Transmit(&huart2, (uint8_t*)showDutyCycle, strlen(showDutyCycle), 10);
 					state = state_functionSquare;
 				}
 				else if(inputchar == 'f')  //ลด Duty cycle
 				{
-					Duty_cycle = Duty_cycle - 0.1;
+					Duty_cycle = Duty_cycle - 10;
 					if(Duty_cycle < 0)
 					{
 						Duty_cycle = 0;
 					}
+					sprintf(showDutyCycle,"DutyCycle = %f Percent\r\n",Duty_cycle);
+					HAL_UART_Transmit(&huart2, (uint8_t*)showDutyCycle, strlen(showDutyCycle), 10);
 					state = state_functionSquare;
 				}
-				else if(inputchar == 'x')  //กลับไปที่ menu
+				else if(inputchar == 'x')  //�?ลับไปที่ menu
 				{
 					state = state_start;
 				}
 				else
 				{
-					state = state_Square;
+					state = state_functionSquare;
 				}
 				break;
 		}
-		static uint64_t timestamp = 0;
-		if (micros() - timestamp > 100)
+		if (micros() - timestamp > 100) //10k Hz
 		{
 			timestamp = micros();
-
-			dataOut %= 4096;
-			if (hspi3.State == HAL_SPI_STATE_READY
-					&& HAL_GPIO_ReadPin(SPI_SS_GPIO_Port, SPI_SS_Pin)
-							== GPIO_PIN_SET)
+			if(wave == 1) //sawtooth
 			{
-				MCP4922SetOutput(DACConfig, dataOut);
+				if(slope == 1)  //slope up
+				{
+					T = 1/f;
+					if(micros() - wavetime <= (1000000*T))  //เปลี่ยนหน่วยเป็น microsec
+					{
+						deltaVfinal = Vhigh - Vlow;
+						delta_t = micros() - wavetime;
+						deltaV = Vlow + (deltaVfinal)*(delta_t/(1000000*T));
+						dataOut = deltaV*4096/3.3;
+					}
+					else if(micros() - wavetime > (1000000*T))
+					{
+						wavetime = micros();
+					}
+				}
+				else if(slope == -1) //slope down
+				{
+					if(micros() - wavetime <= (1000000*T))
+					{
+						deltaVfinal = Vhigh - Vlow;
+						delta_t = micros() - wavetime;
+						deltaV = Vhigh - (deltaVfinal)*(delta_t/(1000000*T));
+						dataOut = deltaV*4096/3.3;
+					}
+					else if(micros() - wavetime > (1000000*T))
+					{
+						wavetime = micros();
+					}
+				}
 			}
+			else if(wave == 2)  // sine wave
+			{
+				T = 1/f;
+				if(micros() - wavetime <= (1000000*T))
+				{
+					deltaVfinal = Vhigh - Vlow;
+					delta_t = micros() - wavetime;
+					VOut = Vlow + ((sin((delta_t/(1000000*T))*2*pi)+1)*(deltaVfinal/2));
+					dataOut = VOut*4096/3.3;
+				}
+				else if(micros() - wavetime > (1000000*T))
+				{
+					wavetime = micros();
+				}
+			}
+			else if(wave == 3)  //square wave
+			{
+				T = 1/f;
+				if(micros() - wavetime <= (1000000*T))
+				{
+					if(micros() - wavetime <= (1000000*T)*(Duty_cycle/100))
+					{
+						VOut = Vhigh;
+					}
+					else if(micros() - wavetime > (1000000*T)*(Duty_cycle/100))
+					{
+						VOut = Vlow;
+					}
+					dataOut = VOut*4096/3.3;
+				}
+				else if(micros() - wavetime > (1000000*T))
+				{
+					wavetime = micros();
+				}
+			}
+			if (hspi3.State == HAL_SPI_STATE_READY && HAL_GPIO_ReadPin(SPI_SS_GPIO_Port, SPI_SS_Pin) == GPIO_PIN_SET)
+			{
+				MCP4922SetOutput(DACConfig, dataOut);  //DACConfigคือ โหลดที่ให้ทำงาน  dataOutคือข้อมูลที่ส่ง 12bit
+			}
+			timestamp = micros();
 		}
     /* USER CODE END WHILE */
 
@@ -588,6 +755,51 @@ static void MX_SPI3_Init(void)
 }
 
 /**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 99;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 4294967295;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+
+}
+
+/**
   * @brief TIM3 Initialization Function
   * @param None
   * @retval None
@@ -606,7 +818,7 @@ static void MX_TIM3_Init(void)
 
   /* USER CODE END TIM3_Init 1 */
   htim3.Instance = TIM3;
-  htim3.Init.Prescaler = 100;
+  htim3.Init.Prescaler = 99;
   htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim3.Init.Period = 100;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
@@ -629,37 +841,6 @@ static void MX_TIM3_Init(void)
   /* USER CODE BEGIN TIM3_Init 2 */
 
   /* USER CODE END TIM3_Init 2 */
-
-}
-
-/**
-  * @brief TIM11 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_TIM11_Init(void)
-{
-
-  /* USER CODE BEGIN TIM11_Init 0 */
-
-  /* USER CODE END TIM11_Init 0 */
-
-  /* USER CODE BEGIN TIM11_Init 1 */
-
-  /* USER CODE END TIM11_Init 1 */
-  htim11.Instance = TIM11;
-  htim11.Init.Prescaler = 99;
-  htim11.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim11.Init.Period = 65535;
-  htim11.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim11.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_Base_Init(&htim11) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM11_Init 2 */
-
-  /* USER CODE END TIM11_Init 2 */
 
 }
 
@@ -771,22 +952,22 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 void MCP4922SetOutput(uint8_t Config, uint16_t DACOutput)
 {
-	uint32_t OutputPacket = (DACOutput & 0x0fff) | ((Config & 0xf) << 12);
-	HAL_GPIO_WritePin(SPI_SS_GPIO_Port, SPI_SS_Pin, GPIO_PIN_RESET);
-	HAL_SPI_Transmit_IT(&hspi3, &OutputPacket, 1);
+	uint32_t OutputPacket = (DACOutput & 0x0fff) | ((Config & 0xf) << 12);  //DACOutputคือ ข้อมูล12bit Configคือ โหมด4bit
+	HAL_GPIO_WritePin(SPI_SS_GPIO_Port, SPI_SS_Pin, GPIO_PIN_RESET);  //เปลี่ยน SS ให้เป็น low เพื่อให้เริ่มส่งข้อมูล
+	HAL_SPI_Transmit_IT(&hspi3, &OutputPacket, 1);  //ส่งข้อมูล
 }
 
 void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
 {
-	if (hspi == &hspi3)
-	{
-		HAL_GPIO_WritePin(SPI_SS_GPIO_Port, SPI_SS_Pin, GPIO_PIN_SET);
+	if (hspi == &hspi3)  //เมื่อส่งข้อมูลครบ 16bit
+		{
+		HAL_GPIO_WritePin(SPI_SS_GPIO_Port, SPI_SS_Pin, GPIO_PIN_SET);  //เปลี่ยน SS ให้เป็น high คือสิ้นสุดการส่งข้อมูล
 	}
 }
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-	if (htim == &htim11)
+	if (htim == &htim2)
 	{
 		_micro += 65535;
 	}
@@ -794,7 +975,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
 inline uint64_t micros()
 {
-	return htim11.Instance->CNT + _micro;
+	return htim2.Instance->CNT + _micro;
 }
 int16_t UARTRecieveIT()
 {
